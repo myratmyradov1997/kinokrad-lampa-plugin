@@ -17,7 +17,7 @@ log = logging.getLogger("kinokrad")
 
 app = Flask(__name__)
 CORS(app)
-APP_VERSION = "1.0.4"
+APP_VERSION = "1.0.5"
 SITE = "https://kinokrad.my"
 PLAYER_HOST = "assortedia-as.stravers.live"
 UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/145 Safari/537.36"
@@ -27,7 +27,7 @@ STREAM_CACHE = {}
 HTML_CACHE = {}
 CACHE_LOCK = threading.Lock()
 BROWSER_LOCK = threading.Lock()
-STREAM_TTL = int(os.getenv("STREAM_TTL", "5400"))
+STREAM_TTL = int(os.getenv("STREAM_TTL", "1200"))
 
 
 def clean(value):
@@ -55,8 +55,9 @@ def allowed_media_url(value):
     )
 
 
-def proxy_url(value):
-    return request.host_url.rstrip("/") + "/api/proxy?url=" + quote(value, safe="")
+def proxy_url(value, stream_key=""):
+    result = request.host_url.rstrip("/") + "/api/proxy?url=" + quote(value, safe="")
+    return result + ("&key=" + quote(stream_key, safe="") if stream_key else "")
 
 
 def fetch_html_browser(url, timeout=60):
@@ -366,6 +367,7 @@ def cache_stream(embed_url, file_id, page_url="", force=False):
         if not force and item and item["expires"] > time.time():
             return cache_key, item["data"]
     data = resolve_with_browser(embed_url, file_id, page_url)
+    data["_embed_url"] = embed_url
     with CACHE_LOCK:
         STREAM_CACHE[cache_key] = {"expires": time.time() + STREAM_TTL, "data": data}
     return cache_key, data
@@ -414,7 +416,7 @@ def api_resolve():
         tracks = []
         for track in data.get("tracks") or []:
             if allowed_media_url(track.get("src", "")):
-                tracks.append({**track, "src": proxy_url(track["src"])})
+                tracks.append({**track, "src": proxy_url(track["src"], key)})
         return jsonify({"key": key, "audios": audios, "tracks": tracks})
     except Exception as exc:
         log.exception("stream resolve failed")
@@ -438,14 +440,14 @@ def api_master(key, audio_index):
         if not allowed_media_url(url):
             continue
         bandwidth = max(300000, height * height * 3)
-        lines += ["#EXT-X-STREAM-INF:BANDWIDTH=%d,RESOLUTION=%dx%d" % (bandwidth, int(height * 16 / 9), height), proxy_url(url)]
+        lines += ["#EXT-X-STREAM-INF:BANDWIDTH=%d,RESOLUTION=%dx%d" % (bandwidth, int(height * 16 / 9), height), proxy_url(url, key)]
     return Response("\n".join(lines) + "\n", mimetype="application/vnd.apple.mpegurl")
 
 
-def rewrite_manifest(text, source):
+def rewrite_manifest(text, source, stream_key=""):
     def wrap(value):
         absolute = urljoin(source, value.strip())
-        return proxy_url(absolute) if allowed_media_url(absolute) else absolute
+        return proxy_url(absolute, stream_key) if allowed_media_url(absolute) else absolute
 
     output = []
     for raw in text.splitlines():
@@ -462,9 +464,17 @@ def rewrite_manifest(text, source):
 @app.get("/api/proxy")
 def api_proxy():
     url = request.args.get("url", "")
+    stream_key = request.args.get("key", "")
     if not allowed_media_url(url):
         return jsonify({"error": "media host not allowed"}), 403
-    headers = {"User-Agent": UA, "Referer": "https://%s/" % PLAYER_HOST}
+    with CACHE_LOCK:
+        cached = STREAM_CACHE.get(stream_key) if stream_key else None
+    embed_url = (cached or {}).get("data", {}).get("_embed_url", "")
+    headers = {"User-Agent": UA, "Referer": embed_url or "https://%s/" % PLAYER_HOST, "Accept": "*/*"}
+    if embed_url:
+        parsed_embed = urlparse(embed_url)
+        headers["Origin"] = "%s://%s" % (parsed_embed.scheme, parsed_embed.netloc)
+        headers.update({"Sec-Fetch-Dest": "empty", "Sec-Fetch-Mode": "cors", "Sec-Fetch-Site": "cross-site"})
     if request.headers.get("Range"):
         headers["Range"] = request.headers["Range"]
     try:
@@ -474,7 +484,7 @@ def api_proxy():
             return jsonify({"error": "redirect host not allowed"}), 403
         content_type = upstream.headers.get("Content-Type", "application/octet-stream")
         if "mpegurl" in content_type or urlparse(upstream.url).path.endswith(".m3u8"):
-            body = rewrite_manifest(upstream.content.decode("utf-8", "replace"), upstream.url)
+            body = rewrite_manifest(upstream.content.decode("utf-8", "replace"), upstream.url, stream_key)
             upstream.close()
             return Response(body, status=upstream.status_code, mimetype="application/vnd.apple.mpegurl")
         passthrough = {k: v for k, v in upstream.headers.items() if k.lower() in {"content-type", "content-length", "content-range", "accept-ranges"}}

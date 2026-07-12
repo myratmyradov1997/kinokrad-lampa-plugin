@@ -51,8 +51,9 @@ def test_media_allowlist_rejects_arbitrary_hosts():
 def test_manifest_rewrite_uses_proxy():
     with server.app.test_request_context("/api/master/x/0.m3u8", base_url="http://localhost:5200"):
         text = "#EXTM3U\nsegment.m4s\n#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"\n"
-        out = server.rewrite_manifest(text, "https://a.vkvideo.cloud/path/index.m3u8")
+        out = server.rewrite_manifest(text, "https://a.vkvideo.cloud/path/index.m3u8", "stream123")
     assert out.count("http://localhost:5200/api/proxy?url=") == 2
+    assert out.count("&key=stream123") == 2
 
 
 def test_health_and_plugin_routes():
