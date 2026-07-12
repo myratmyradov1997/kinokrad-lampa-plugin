@@ -61,3 +61,27 @@ def test_health_and_plugin_routes():
     plugin = client.get("/plugin.js")
     assert plugin.status_code == 200
     assert b"__BASE_URL__" not in plugin.data
+
+
+def test_fetch_html_uses_browser_fallback_on_403(monkeypatch=None):
+    class Forbidden:
+        status_code = 403
+        apparent_encoding = "utf-8"
+        text = ""
+
+        def raise_for_status(self):
+            error = server.requests.HTTPError("forbidden")
+            error.response = self
+            raise error
+
+    original_get = server.SESSION.get
+    original_browser = server.fetch_html_browser
+    try:
+        server.HTML_CACHE.clear()
+        server.SESSION.get = lambda *args, **kwargs: Forbidden()
+        server.fetch_html_browser = lambda *args, **kwargs: "<html>browser</html>"
+        assert server.fetch_html("https://kinokrad.my/test.html") == "<html>browser</html>"
+    finally:
+        server.SESSION.get = original_get
+        server.fetch_html_browser = original_browser
+        server.HTML_CACHE.clear()

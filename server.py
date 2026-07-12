@@ -17,13 +17,14 @@ log = logging.getLogger("kinokrad")
 
 app = Flask(__name__)
 CORS(app)
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 SITE = "https://kinokrad.my"
 PLAYER_HOST = "assortedia-as.stravers.live"
 UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/145 Safari/537.36"
 SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": UA, "Accept-Language": "ru-RU,ru;q=0.9"})
 STREAM_CACHE = {}
+HTML_CACHE = {}
 CACHE_LOCK = threading.Lock()
 BROWSER_LOCK = threading.Lock()
 STREAM_TTL = int(os.getenv("STREAM_TTL", "5400"))
@@ -58,11 +59,41 @@ def proxy_url(value):
     return request.host_url.rstrip("/") + "/api/proxy?url=" + quote(value, safe="")
 
 
+def fetch_html_browser(url, timeout=60):
+    from playwright.sync_api import sync_playwright
+
+    with BROWSER_LOCK, sync_playwright() as p:
+        browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
+        page = browser.new_page(user_agent=UA, locale="ru-RU")
+        response = page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
+        if not response or response.status >= 400:
+            status = response.status if response else "no response"
+            browser.close()
+            raise RuntimeError("browser fetch failed: %s" % status)
+        html = page.content()
+        browser.close()
+        return html
+
+
 def fetch_html(url, timeout=25):
-    response = SESSION.get(url, timeout=timeout)
-    response.raise_for_status()
-    response.encoding = response.apparent_encoding or "utf-8"
-    return response.text
+    now = time.time()
+    with CACHE_LOCK:
+        cached = HTML_CACHE.get(url)
+        if cached and cached["expires"] > now:
+            return cached["html"]
+    try:
+        response = SESSION.get(url, timeout=timeout)
+        response.raise_for_status()
+        response.encoding = response.apparent_encoding or "utf-8"
+        html = response.text
+    except requests.RequestException as exc:
+        if getattr(exc.response, "status_code", None) not in {403, 429}:
+            raise
+        log.info("HTTP blocked for %s, using Chromium fallback", urlparse(url).hostname)
+        html = fetch_html_browser(url, max(timeout, 60))
+    with CACHE_LOCK:
+        HTML_CACHE[url] = {"expires": now + 300, "html": html}
+    return html
 
 
 def catalog_url(kind, page):
