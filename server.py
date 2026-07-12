@@ -17,7 +17,7 @@ log = logging.getLogger("kinokrad")
 
 app = Flask(__name__)
 CORS(app)
-APP_VERSION = "1.0.5"
+APP_VERSION = "1.0.6"
 SITE = "https://kinokrad.my"
 PLAYER_HOST = "assortedia-as.stravers.live"
 UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/145 Safari/537.36"
@@ -473,7 +473,7 @@ def api_proxy():
     headers = {"User-Agent": UA, "Referer": embed_url or "https://%s/" % PLAYER_HOST, "Accept": "*/*"}
     if embed_url:
         parsed_embed = urlparse(embed_url)
-        headers["Origin"] = "%s://%s" % (parsed_embed.scheme, parsed_embed.netloc)
+        headers["Origin"] = "%s://%s" % (parsed_embed.scheme, parsed_embed.hostname)
         headers.update({"Sec-Fetch-Dest": "empty", "Sec-Fetch-Mode": "cors", "Sec-Fetch-Site": "cross-site"})
     if request.headers.get("Range"):
         headers["Range"] = request.headers["Range"]
