@@ -69,6 +69,12 @@ def test_player_json_parser():
     assert server.parse_player_json(html, "fileList") == payload
 
 
+def test_player_fetch_waits_for_async_file_list():
+    source = open(server.__file__, encoding="utf-8").read()
+    assert 'r"\\bfileList\\s*=\\s*JSON\\.parse"' in source
+    assert "player metadata timed out" in source
+
+
 def test_media_allowlist_rejects_arbitrary_hosts():
     assert server.allowed_media_url("https://a.vkvideo.cloud/video.m3u8")
     assert server.allowed_media_url("https://assortedia-as.stravers.live/sub.vtt")

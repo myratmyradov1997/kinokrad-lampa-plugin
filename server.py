@@ -17,7 +17,7 @@ log = logging.getLogger("kinokrad")
 
 app = Flask(__name__)
 CORS(app)
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.0.1"
 SITE = "https://kinokrad.my"
 PLAYER_HOST = "assortedia-as.stravers.live"
 UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/145 Safari/537.36"
@@ -117,9 +117,18 @@ def fetch_player_html(page_url, expected_embed, timeout=60):
         if not player_frame or urlparse(player_frame.url).hostname != urlparse(expected_embed).hostname:
             browser.close()
             raise RuntimeError("trusted KinoKrad player frame not found")
-        page.wait_for_timeout(500)
-        html = player_frame.content()
+        # Player guard теперь добавляет `fileList` асинхронно: фиксированная
+        # задержка создавала гонку на сервере и случайные 502.
+        player_deadline = time.time() + 15
+        html = ""
+        while time.time() < player_deadline:
+            html = player_frame.content()
+            if re.search(r"\bfileList\s*=\s*JSON\.parse", html):
+                break
+            page.wait_for_timeout(250)
         browser.close()
+        if not re.search(r"\bfileList\s*=\s*JSON\.parse", html):
+            raise RuntimeError("KinoKrad player metadata timed out")
         return html
 
 
