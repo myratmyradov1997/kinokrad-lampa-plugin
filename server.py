@@ -17,7 +17,7 @@ log = logging.getLogger("kinokrad")
 
 app = Flask(__name__)
 CORS(app)
-APP_VERSION = "1.0.3"
+APP_VERSION = "1.0.4"
 SITE = "https://kinokrad.my"
 PLAYER_HOST = "assortedia-as.stravers.live"
 UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/145 Safari/537.36"
@@ -93,6 +93,33 @@ def fetch_html(url, timeout=25):
     with CACHE_LOCK:
         HTML_CACHE[url] = {"expires": now + 300, "html": html}
     return html
+
+
+def fetch_player_html(page_url, expected_embed, timeout=60):
+    """Получает fileList только через реальный сценарий карточка → Смотреть."""
+    from playwright.sync_api import sync_playwright
+
+    with BROWSER_LOCK, sync_playwright() as p:
+        browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
+        page = browser.new_page(user_agent=UA, locale="ru-RU")
+        response = page.goto(page_url, wait_until="domcontentloaded", timeout=timeout * 1000)
+        if not response or response.status >= 400:
+            browser.close()
+            raise RuntimeError("KinoKrad card is unavailable in browser")
+        page.get_by_role("button", name="Смотреть").click(timeout=30000)
+        deadline = time.time() + 20
+        player_frame = None
+        while time.time() < deadline and not player_frame:
+            player_frame = next((frame for frame in page.frames if urlparse(frame.url).hostname == PLAYER_HOST), None)
+            if not player_frame:
+                page.wait_for_timeout(200)
+        if not player_frame or urlparse(player_frame.url).hostname != urlparse(expected_embed).hostname:
+            browser.close()
+            raise RuntimeError("trusted KinoKrad player frame not found")
+        page.wait_for_timeout(500)
+        html = player_frame.content()
+        browser.close()
+        return html
 
 
 def catalog_url(kind, page):
@@ -247,7 +274,7 @@ def parse_detail(html, url):
         result[key] = m.group(1).replace(",", ".") if m else ""
     if not embed or urlparse(embed).hostname != PLAYER_HOST:
         raise ValueError("trusted player iframe not found")
-    player_html = fetch_html(embed)
+    player_html = fetch_player_html(url, embed)
     files = parse_player_json(player_html, "fileList")
     result["media_type"] = "series" if files.get("type") == "serial" else "movie"
     result["playback"] = {
