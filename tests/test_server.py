@@ -63,9 +63,9 @@ def test_health_and_plugin_routes():
     assert b"__BASE_URL__" not in plugin.data
 
 
-def test_fetch_html_uses_browser_fallback_on_403(monkeypatch=None):
+def test_fetch_html_uses_browser_fallback_on_protected_http_error(monkeypatch=None):
     class Forbidden:
-        status_code = 403
+        status_code = 404
         apparent_encoding = "utf-8"
         text = ""
 

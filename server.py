@@ -17,7 +17,7 @@ log = logging.getLogger("kinokrad")
 
 app = Flask(__name__)
 CORS(app)
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.0.3"
 SITE = "https://kinokrad.my"
 PLAYER_HOST = "assortedia-as.stravers.live"
 UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/145 Safari/537.36"
@@ -87,9 +87,8 @@ def fetch_html(url, timeout=25):
         response.encoding = response.apparent_encoding or "utf-8"
         html = response.text
     except requests.RequestException as exc:
-        if getattr(exc.response, "status_code", None) not in {403, 429}:
-            raise
-        log.info("HTTP blocked for %s, using Chromium fallback", urlparse(url).hostname)
+        status = getattr(exc.response, "status_code", None)
+        log.info("HTTP fetch failed for %s (%s), using Chromium fallback", urlparse(url).hostname, status or type(exc).__name__)
         html = fetch_html_browser(url, max(timeout, 60))
     with CACHE_LOCK:
         HTML_CACHE[url] = {"expires": now + 300, "html": html}
