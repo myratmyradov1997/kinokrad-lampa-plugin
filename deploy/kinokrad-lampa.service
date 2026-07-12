@@ -1,0 +1,16 @@
+[Unit]
+Description=KinoKrad Lampa plugin and streaming proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/kinokrad-lampa-plugin
+Environment=PORT=5200
+Environment=PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright
+ExecStart=/root/kinokrad-lampa-plugin/venv/bin/gunicorn --workers 1 --threads 4 --timeout 120 --bind 0.0.0.0:5200 server:app
+Restart=always
+RestartSec=4
+
+[Install]
+WantedBy=multi-user.target
