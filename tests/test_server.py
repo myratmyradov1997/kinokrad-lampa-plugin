@@ -15,6 +15,34 @@ def test_catalog_parser():
     assert item["poster"] == "https://kinokrad.my/poster.jpg"
 
 
+def test_search_parser_reads_cards_and_ratings():
+    html = '''<div class="kino-card" itemscope itemtype="https://schema.org/TVSeries">
+      <a class="kino-poster" href="https://kinokrad.my/22460-avatar.html" title="Аватар (2024)">
+        <img data-src="/avatar.jpg"><span class="kino-card-title">Аватар <span class="card-title-year">(2024)</span></span>
+        <span class="kino-poster-imdb-rting" data-title="IMDb: 7.2"></span>
+        <span class="kino-poster-kp-rting" data-title="KP: 7.15"></span>
+      </a><span itemprop="description">Описание сериала</span></div>'''
+    item = server.parse_search(html)[0]
+    assert item["title"] == "Аватар"
+    assert item["year"] == "2024"
+    assert item["poster"] == "https://kinokrad.my/avatar.jpg"
+    assert item["kinopoisk"] == "7.15"
+    assert item["media_type"] == "series"
+
+
+def test_search_api_uses_encoded_kinokrad_url():
+    original = server.fetch_html
+    try:
+        called = []
+        server.fetch_html = lambda url: called.append(url) or '<a class="kino-poster" href="/1.html">Тест (2026)</a>'
+        response = server.app.test_client().get("/api/search?q=тест кино")
+        assert response.status_code == 200
+        assert response.json["count"] == 1
+        assert "%D1%82%D0%B5%D1%81%D1%82%20%D0%BA%D0%B8%D0%BD%D0%BE" in called[0]
+    finally:
+        server.fetch_html = original
+
+
 def test_movie_versions_are_flattened():
     files = {"all": {"theatrical": {"t66": {"WEB-DL": {
         "id": 42, "id_translation": 66, "translation": "Дубляж", "uhd": 1

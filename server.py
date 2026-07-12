@@ -17,7 +17,7 @@ log = logging.getLogger("kinokrad")
 
 app = Flask(__name__)
 CORS(app)
-APP_VERSION = "1.0.6"
+APP_VERSION = "2.0.0"
 SITE = "https://kinokrad.my"
 PLAYER_HOST = "assortedia-as.stravers.live"
 UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/145 Safari/537.36"
@@ -146,6 +146,44 @@ def parse_catalog(html):
             "poster": poster, "url": url,
         })
     return result
+
+
+def parse_search(html):
+    """Разбирает штатную выдачу `/search/<query>/` KinoKrad."""
+    soup = BeautifulSoup(html, "html.parser")
+    result = []
+    seen = set()
+    for card in soup.select(".kino-card"):
+        anchor = card.select_one("a.kino-poster[href]")
+        if not anchor:
+            continue
+        url = full_url(anchor.get("href"))
+        if not allowed_page_url(url) or url in seen:
+            continue
+        seen.add(url)
+        title_node = card.select_one(".kino-card-title")
+        raw_title = clean(title_node.get_text(" ", strip=True) if title_node else anchor.get("title", ""))
+        year_match = re.search(r"\((\d{4})\)", raw_title)
+        year_node = card.select_one(".card-title-year, .kino-card-year")
+        year = clean((year_node.get("title") or year_node.get_text(" ", strip=True)) if year_node else "").strip("()")
+        year = year or (year_match.group(1) if year_match else "")
+        title = re.sub(r"\s*\(\d{4}\)\s*$", "", raw_title)
+        image = anchor.find("img")
+        poster = full_url((image.get("data-src") or image.get("src")) if image else "")
+        description = card.select_one('[itemprop="description"]')
+        imdb = card.select_one(".kino-poster-imdb-rting")
+        kp = card.select_one(".kino-poster-kp-rting")
+        item_type = (card.get("itemtype") or "").lower()
+        result.append({
+            "id": stable_id(url), "title": title, "year": year,
+            "poster": poster, "url": url,
+            "description": clean(description.get_text(" ", strip=True)) if description else "",
+            "imdb": clean((imdb or {}).get("data-title", "")).replace("IMDb:", "").strip(),
+            "kinopoisk": clean((kp or {}).get("data-title", "")).replace("KP:", "").strip(),
+            "media_type": "series" if "tvseries" in item_type or re.search(r"\bсезон\b", title, re.I) else "movie",
+        })
+    # Некоторые варианты шаблона не содержат внешний `.kino-card`.
+    return result or parse_catalog(html)
 
 
 def parse_json_script(soup):
@@ -381,6 +419,20 @@ def api_catalog():
     page = max(1, min(int(request.args.get("page", 1)), 20))
     items = parse_catalog(fetch_html(catalog_url(kind, page)))
     return jsonify({"type": kind, "page": page, "items": items, "has_more": bool(items)})
+
+
+@app.get("/api/search")
+def api_search():
+    query = clean(request.args.get("q", ""))
+    if not query or len(query) > 120:
+        return jsonify({"error": "query must contain 1-120 characters", "items": []}), 400
+    try:
+        url = SITE + "/search/" + quote(query, safe="") + "/"
+        items = parse_search(fetch_html(url))
+        return jsonify({"query": query, "items": items, "count": len(items)})
+    except Exception as exc:
+        log.exception("search failed")
+        return jsonify({"error": str(exc), "items": []}), 502
 
 
 @app.get("/api/detail")
