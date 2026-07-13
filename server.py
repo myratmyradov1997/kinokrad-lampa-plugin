@@ -1,4 +1,5 @@
 import hashlib
+import html as html_lib
 import json
 import logging
 import os
@@ -18,7 +19,7 @@ log = logging.getLogger("kinokrad")
 
 app = Flask(__name__)
 CORS(app)
-APP_VERSION = "2.3.0"
+APP_VERSION = "2.4.0"
 SITE = "https://kinokrad.my"
 PLAYER_HOST = "assortedia-as.stravers.live"
 SEARCH_AJAX = SITE + "/engine/lazydev/dle_search/ajax.php"
@@ -28,6 +29,8 @@ SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": UA, "Accept-Language": "ru-RU,ru;q=0.9"})
 STREAM_CACHE = {}
 HTML_CACHE = {}
+SEARCH_CACHE = {}
+DETAIL_CACHE = {}
 CACHE_LOCK = threading.Lock()
 BROWSER_LOCK = threading.Lock()
 STREAM_TTL = int(os.getenv("STREAM_TTL", "1200"))
@@ -390,6 +393,8 @@ def flatten_series(file_list):
                         "file_id": item["id"], "translation_id": item.get("id_translation"),
                         "label": item.get("translation") or "Озвучка",
                         "quality": item.get("quality") or "",
+                        "season": int(re.sub(r"\D", "", str(season_key)) or 0),
+                        "episode": int(re.sub(r"\D", "", str(episode_key)) or 0),
                     })
             episodes.append({"episode": int(re.sub(r"\D", "", str(episode_key)) or 0), "translations": translations})
         seasons.append({"season": int(re.sub(r"\D", "", str(season_key)) or 0), "episodes": episodes})
@@ -501,25 +506,32 @@ def resolve_with_browser(embed_url, file_id, page_url=""):
         page.on("request", on_request)
         page.on("response", on_response)
         if page_url and allowed_page_url(page_url):
+            # Плееру нужен iframe-контекст и корректный Referer, но загружать всю
+            # тяжёлую карточку KinoKrad и ждать обработчик кнопки не требуется.
+            # Минимальная страница сохраняет тот же origin/referrer и сокращает
+            # cold resolve примерно с 12-14 до 7-8 секунд.
+            page.route(
+                page_url,
+                lambda route: route.fulfill(
+                    status=200,
+                    content_type="text/html",
+                    body='<iframe src="%s"></iframe>' % html_lib.escape(embed_url, quote=True),
+                ),
+            )
             page.goto(page_url, wait_until="domcontentloaded", timeout=60000)
-            try:
-                page.get_by_role("button", name="Смотреть").click(timeout=30000)
-            except Exception:
-                page.goto(embed_url, referer=page_url, wait_until="domcontentloaded", timeout=60000)
         else:
             page.goto(embed_url, wait_until="domcontentloaded", timeout=60000)
-        deadline = time.time() + 25
-        while time.time() < deadline and not (captured and response_objects):
+        deadline = time.time() + 18
+        while time.time() < deadline and int(file_id) not in response_objects:
             page.wait_for_timeout(250)
         if not captured:
             browser.close()
             raise RuntimeError("KinoKrad guard did not issue stream request")
 
-        initial_id = int(captured["url"].rstrip("/").split("/")[-1])
-        if initial_id != int(file_id) or initial_id not in response_objects:
+        if int(file_id) not in response_objects:
             browser.close()
             raise RuntimeError("KinoKrad player did not select requested file")
-        result = response_objects[initial_id].json()
+        result = response_objects[int(file_id)].json()
         browser.close()
     if not result.get("hlsSource"):
         raise RuntimeError("KinoKrad returned no HLS sources")
@@ -554,6 +566,11 @@ def api_search():
     query = clean(request.args.get("q", ""))
     if not query or len(query) > 120:
         return jsonify({"error": "query must contain 1-120 characters", "items": []}), 400
+    cache_key = query.casefold()
+    with CACHE_LOCK:
+        cached = SEARCH_CACHE.get(cache_key)
+    if cached and cached["expires"] > time.time():
+        return jsonify(cached["data"])
     try:
         try:
             items = search_ajax(query)
@@ -565,7 +582,10 @@ def api_search():
             if fresh_hash:
                 SEARCH_STATE["hash"] = fresh_hash.group(1)
             items = parse_search(html)
-        return jsonify({"query": query, "items": items, "count": len(items)})
+        payload = {"query": query, "items": items, "count": len(items)}
+        with CACHE_LOCK:
+            SEARCH_CACHE[cache_key] = {"expires": time.time() + 120, "data": payload}
+        return jsonify(payload)
     except Exception as exc:
         log.exception("search failed")
         return jsonify({"error": str(exc), "items": []}), 502
@@ -576,13 +596,20 @@ def api_detail():
     url = request.args.get("url", "")
     if not allowed_page_url(url):
         return jsonify({"error": "invalid KinoKrad URL"}), 400
+    with CACHE_LOCK:
+        cached = DETAIL_CACHE.get(url)
+    if cached and cached["expires"] > time.time():
+        return jsonify(cached["data"])
     try:
         try:
             page_html, player_html = fetch_detail_fast(url)
         except Exception as fast_exc:
             log.warning("fast detail failed, using browser fallback: %s", fast_exc)
             page_html, player_html = fetch_detail_browser(url)
-        return jsonify(parse_detail(page_html, url, player_html))
+        detail = parse_detail(page_html, url, player_html)
+        with CACHE_LOCK:
+            DETAIL_CACHE[url] = {"expires": time.time() + 600, "data": detail}
+        return jsonify(detail)
     except Exception as exc:
         log.exception("detail failed")
         return jsonify({"error": str(exc)}), 502
@@ -600,11 +627,20 @@ def api_resolve():
         audios = []
         for index, audio in enumerate(data.get("hlsSource") or []):
             qualities = audio.get("quality") or {}
+            quality_urls = {}
+            for height in sorted((int(x) for x in qualities if str(x).isdigit()), reverse=True):
+                raw = qualities.get(str(height), qualities.get(height, ""))
+                media_url = clean(str(raw).split(" or ")[0])
+                if allowed_media_url(media_url):
+                    quality_urls["%dp" % height] = proxy_url(media_url, key)
             audios.append({
                 "label": audio.get("label") or "Аудиодорожка %d" % (index + 1),
                 "audio_id": audio.get("audioId"),
-                "url": request.host_url.rstrip("/") + "/api/master/%s/%d.m3u8?v=%d" % (key, index, int(time.time())),
-                "qualities": sorted([int(x) for x in qualities if str(x).isdigit()], reverse=True),
+                # Lampa показывает выбор качества только при явном
+                # `element.quality`; первый URL сразу указывает на максимум.
+                "url": next(iter(quality_urls.values()), request.host_url.rstrip("/") + "/api/master/%s/%d.m3u8?v=%d" % (key, index, int(time.time()))),
+                "qualities": [int(x[:-1]) for x in quality_urls],
+                "quality": quality_urls,
             })
         tracks = []
         for track in data.get("tracks") or []:

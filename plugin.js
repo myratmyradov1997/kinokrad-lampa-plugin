@@ -57,7 +57,6 @@
     var searchItems = [];
     var currentSeason = null;
     var currentEpisode = null;
-    var enterAction = null;
 
     function active() {
       try { return Lampa.Activity.active().activity === self.activity; } catch (e) { return true; }
@@ -91,7 +90,6 @@
     function picker(title, subtitle, items, callback, nextMode) {
       mode = nextMode;
       last = null;
-      enterAction = null;
       scroll.reset();
       scroll.body().empty().append('<div class="kk-online-head"><div class="kk-brand">KinoKrad</div><h2>' + esc(title) +
         '</h2><p>' + esc(subtitle || '') + '</p></div>');
@@ -105,10 +103,9 @@
           setTimeout(function () { entering = false; }, 700);
           callback(item);
         };
-        node.on('hover:focus', function (event) {
-          last = event.target;
-          enterAction = choose;
-          scroll.immediate($(event.target), true);
+        node.on('hover:focus', function () {
+          last = node[0];
+          scroll.immediate(node, true);
         });
         node.on('hover:enter click', choose);
         scroll.append(node);
@@ -192,7 +189,8 @@
     function play(audio, tracks) {
       var retries = 0;
       var element = {
-        title: detail.title + ' — ' + (selectedFile.label || audio.label || SOURCE),
+        title: detail.title + (selectedFile.season ? ' — S' + selectedFile.season + 'E' + selectedFile.episode : '') +
+          ' — ' + (selectedFile.label || audio.label || SOURCE),
         url: audio.url,
         timeline: {},
         isonline: true,
@@ -201,14 +199,21 @@
         hls_retry_timeout: 45000,
         tracks: tracks || []
       };
+      if (audio.quality && Object.keys(audio.quality).length) element.quality = audio.quality;
       element.error = function (work, useReserve) {
         if (retries >= 2) return;
         retries += 1;
         api('/api/resolve?embed_url=' + encodeURIComponent(detail.embed_url) + '&page_url=' +
           encodeURIComponent(detail.url) + '&file_id=' + selectedFile.file_id + '&refresh=' + Date.now(), function (fresh) {
           if (fresh.audios && fresh.audios.length) {
-            work.url = fresh.audios[0].url;
-            useReserve(work.url);
+            var renewedAudio = fresh.audios.filter(function (item) {
+              return String(item.audio_id) === String(audio.audio_id);
+            })[0] || fresh.audios[0];
+            var renewed = work.quality_switched && renewedAudio.quality && renewedAudio.quality[work.quality_switched] ?
+              renewedAudio.quality[work.quality_switched] : renewedAudio.url;
+            work.url = renewed;
+            work.quality = renewedAudio.quality || work.quality;
+            useReserve(renewed);
           }
         });
       };
@@ -244,7 +249,6 @@
         up: function () { if (Navigator.canmove('up')) { Navigator.move('up'); scrollToFocused(); } else Lampa.Controller.toggle('head'); },
         down: function () { Navigator.move('down'); scrollToFocused(); },
         enter: function () {
-          if (enterAction) return enterAction();
           var target = scroll.render().find('.selector.focus').first();
           if (!target.length) target = scroll.render().find('.selector').first();
           if (target.length) target.trigger('hover:enter');

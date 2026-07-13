@@ -96,6 +96,8 @@ def test_series_tree_is_normalized():
     assert seasons[0]["season"] == 2
     assert seasons[0]["episodes"][0]["episode"] == 1
     assert seasons[0]["episodes"][0]["translations"][0]["file_id"] == 99
+    assert seasons[0]["episodes"][0]["translations"][0]["season"] == 2
+    assert seasons[0]["episodes"][0]["translations"][0]["episode"] == 1
 
 
 def test_player_json_parser():
@@ -156,6 +158,32 @@ def test_health_and_plugin_routes():
     plugin = client.get("/plugin.js")
     assert plugin.status_code == 200
     assert b"__BASE_URL__" not in plugin.data
+
+
+def test_resolve_exposes_explicit_lampa_quality_map():
+    original = server.cache_stream
+    try:
+        server.cache_stream = lambda *args, **kwargs: ("stream123", {"hlsSource": [{
+            "audioId": "7", "label": "Русский", "quality": {
+                "360": "https://a.vkvideo.cloud/360/master.m3u8",
+                "720": "https://a.vkvideo.cloud/720/master.m3u8",
+            }
+        }]})
+        response = server.app.test_client().get(
+            "/api/resolve",
+            query_string={
+                "embed_url": "https://assortedia-as.stravers.live/?token=x",
+                "page_url": "https://kinokrad.my/test.html",
+                "file_id": "42",
+            },
+        )
+        audio = response.json["audios"][0]
+        assert audio["qualities"] == [720, 360]
+        assert set(audio["quality"]) == {"720p", "360p"}
+        assert audio["url"] == audio["quality"]["720p"]
+        assert "key=stream123" in audio["quality"]["720p"]
+    finally:
+        server.cache_stream = original
 
 
 def test_fetch_html_uses_browser_fallback_on_protected_http_error(monkeypatch=None):
