@@ -110,6 +110,13 @@ def test_player_fetch_waits_for_async_file_list():
     assert "player metadata timed out" in source
 
 
+def test_detail_route_uses_single_browser_pass():
+    source = open(server.__file__, encoding="utf-8").read()
+    route = source[source.index("def api_detail():"):source.index("@app.get(\"/api/resolve\")")]
+    assert "fetch_detail_browser(url)" in route
+    assert "fetch_html(url)" not in route
+
+
 def test_media_allowlist_rejects_arbitrary_hosts():
     assert server.allowed_media_url("https://a.vkvideo.cloud/video.m3u8")
     assert server.allowed_media_url("https://assortedia-as.stravers.live/sub.vtt")

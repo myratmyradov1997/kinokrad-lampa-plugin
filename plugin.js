@@ -48,6 +48,7 @@
     var self = this;
     var network = new Lampa.Reguest();
     var scroll = new Lampa.Scroll({ mask: true, over: true });
+    scroll.render().addClass('kk-online-scroll');
     var last = null;
     var mode = 'loading';
     var movie = object.movie || object.card || object.element || {};
@@ -71,6 +72,16 @@
       } catch (e) {}
     }
 
+    function scrollToFocused() {
+      setTimeout(function () {
+        if (!active()) return;
+        var target = scroll.render().find('.selector.focus').first();
+        if (!target.length) return;
+        last = target[0];
+        scroll.immediate(target, true);
+      }, 0);
+    }
+
     function state(text, isError) {
       last = null;
       scroll.body().empty().append('<div class="kk-state ' + (isError ? 'kk-error' : '') + '">' +
@@ -81,6 +92,7 @@
       mode = nextMode;
       last = null;
       enterAction = null;
+      scroll.reset();
       scroll.body().empty().append('<div class="kk-online-head"><div class="kk-brand">KinoKrad</div><h2>' + esc(title) +
         '</h2><p>' + esc(subtitle || '') + '</p></div>');
       items.forEach(function (item) {
@@ -96,7 +108,7 @@
         node.on('hover:focus', function (event) {
           last = event.target;
           enterAction = choose;
-          scroll.update($(event.target), true);
+          scroll.immediate($(event.target), true);
         });
         node.on('hover:enter click', choose);
         scroll.append(node);
@@ -227,10 +239,10 @@
     this.start = function () {
       Lampa.Controller.add('content', {
         toggle: focus,
-        left: function () { if (Navigator.canmove('left')) Navigator.move('left'); else Lampa.Controller.toggle('menu'); },
-        right: function () { Navigator.move('right'); },
-        up: function () { if (Navigator.canmove('up')) Navigator.move('up'); else Lampa.Controller.toggle('head'); },
-        down: function () { Navigator.move('down'); },
+        left: function () { if (Navigator.canmove('left')) { Navigator.move('left'); scrollToFocused(); } else Lampa.Controller.toggle('menu'); },
+        right: function () { Navigator.move('right'); scrollToFocused(); },
+        up: function () { if (Navigator.canmove('up')) { Navigator.move('up'); scrollToFocused(); } else Lampa.Controller.toggle('head'); },
+        down: function () { Navigator.move('down'); scrollToFocused(); },
         enter: function () {
           if (enterAction) return enterAction();
           var target = scroll.render().find('.selector.focus').first();
@@ -304,7 +316,7 @@
   else Lampa.Listener.follow('app', function (event) { if (event.type === 'ready') start(); });
 
   $('head').append('<style>' +
-    '.kinokrad--button svg{width:1.7em;height:1.7em}.kk-state{min-height:65vh;display:flex;gap:1em;flex-direction:column;align-items:center;justify-content:center;text-align:center}' +
+    '.kinokrad--button svg{width:1.7em;height:1.7em}.kk-online-scroll{height:100%}.kk-online-scroll .scroll__body{min-height:100%}.kk-state{min-height:65vh;display:flex;gap:1em;flex-direction:column;align-items:center;justify-content:center;text-align:center}' +
     '.kk-spinner{width:2.5em;height:2.5em;border:.22em solid #ffffff22;border-top-color:#e53935;border-radius:50%;animation:kkspin .8s linear infinite}.kk-error{color:#ef9a9a}' +
     '.kk-online-head{padding:2.2em 2.8em 1em}.kk-online-head h2{font-size:2.5em;margin:.25em 0}.kk-online-head p{color:#aaa;margin:0}.kk-brand{display:inline-block;padding:.3em .7em;border-radius:1em;background:#e53935;font-weight:800}' +
     '.kk-online-item{margin:.65em 2.8em;padding:1em 1.2em;border-radius:.7em;background:rgba(255,255,255,.08)}.kk-online-item.focus{background:#e53935;transform:scale(1.015)}' +

@@ -18,7 +18,7 @@ log = logging.getLogger("kinokrad")
 
 app = Flask(__name__)
 CORS(app)
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.2.0"
 SITE = "https://kinokrad.my"
 PLAYER_HOST = "assortedia-as.stravers.live"
 SEARCH_AJAX = SITE + "/engine/lazydev/dle_search/ajax.php"
@@ -99,40 +99,56 @@ def fetch_html(url, timeout=25):
     return html
 
 
-def fetch_player_html(page_url, expected_embed, timeout=60):
-    """Получает fileList только через реальный сценарий карточка → Смотреть."""
+def fetch_detail_browser(page_url, expected_embed="", timeout=60):
+    """Одним Chromium-проходом получает HTML карточки и player fileList."""
     from playwright.sync_api import sync_playwright
 
     with BROWSER_LOCK, sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
-        page = browser.new_page(user_agent=UA, locale="ru-RU")
-        response = page.goto(page_url, wait_until="domcontentloaded", timeout=timeout * 1000)
-        if not response or response.status >= 400:
-            browser.close()
-            raise RuntimeError("KinoKrad card is unavailable in browser")
-        page.get_by_role("button", name="Смотреть").click(timeout=30000)
-        deadline = time.time() + 20
-        player_frame = None
-        while time.time() < deadline and not player_frame:
-            player_frame = next((frame for frame in page.frames if urlparse(frame.url).hostname == PLAYER_HOST), None)
+        try:
+            page = browser.new_page(user_agent=UA, locale="ru-RU")
+            response = page.goto(page_url, wait_until="domcontentloaded", timeout=timeout * 1000)
+            if not response or response.status >= 400:
+                raise RuntimeError("KinoKrad card is unavailable in browser")
+            page_html = page.content()
+            page_iframe = BeautifulSoup(page_html, "html.parser").select_one('iframe[src*="stravers.live"]')
+            page_embed = full_url(page_iframe.get("src"), SITE) if page_iframe else ""
+            trusted_embed = expected_embed or page_embed
+            if trusted_embed and urlparse(trusted_embed).hostname != PLAYER_HOST:
+                raise RuntimeError("trusted KinoKrad player iframe not found")
+
+            page.get_by_role("button", name="Смотреть").click(timeout=30000)
+            deadline = time.time() + 20
+            player_frame = None
+            while time.time() < deadline and not player_frame:
+                player_frame = next((frame for frame in page.frames if urlparse(frame.url).hostname == PLAYER_HOST), None)
+                if not player_frame:
+                    page.wait_for_timeout(200)
             if not player_frame:
-                page.wait_for_timeout(200)
-        if not player_frame or urlparse(player_frame.url).hostname != urlparse(expected_embed).hostname:
+                raise RuntimeError("trusted KinoKrad player frame not found")
+            trusted_embed = trusted_embed or player_frame.url
+            if urlparse(player_frame.url).hostname != urlparse(trusted_embed).hostname:
+                raise RuntimeError("trusted KinoKrad player frame not found")
+            # На некоторых карточках iframe добавляется только после клика.
+            page_html = page.content()
+
+            player_deadline = time.time() + 15
+            player_html = ""
+            while time.time() < player_deadline:
+                player_html = player_frame.content()
+                if re.search(r"\bfileList\s*=\s*JSON\.parse", player_html):
+                    break
+                page.wait_for_timeout(250)
+            if not re.search(r"\bfileList\s*=\s*JSON\.parse", player_html):
+                raise RuntimeError("KinoKrad player metadata timed out")
+            return page_html, player_html
+        finally:
             browser.close()
-            raise RuntimeError("trusted KinoKrad player frame not found")
-        # Player guard теперь добавляет `fileList` асинхронно: фиксированная
-        # задержка создавала гонку на сервере и случайные 502.
-        player_deadline = time.time() + 15
-        html = ""
-        while time.time() < player_deadline:
-            html = player_frame.content()
-            if re.search(r"\bfileList\s*=\s*JSON\.parse", html):
-                break
-            page.wait_for_timeout(250)
-        browser.close()
-        if not re.search(r"\bfileList\s*=\s*JSON\.parse", html):
-            raise RuntimeError("KinoKrad player metadata timed out")
-        return html
+
+
+def fetch_player_html(page_url, expected_embed, timeout=60):
+    """Совместимый wrapper для тестов и внешних вызовов."""
+    return fetch_detail_browser(page_url, expected_embed, timeout)[1]
 
 
 def catalog_url(kind, page):
@@ -336,7 +352,7 @@ def flatten_series(file_list):
     return seasons
 
 
-def parse_detail(html, url):
+def parse_detail(html, url, player_html=None):
     soup = BeautifulSoup(html, "html.parser")
     ld = parse_json_script(soup)
     title = clean(ld.get("name") or (soup.find("h1").get_text(" ", strip=True) if soup.find("h1") else ""))
@@ -381,7 +397,7 @@ def parse_detail(html, url):
         result[key] = m.group(1).replace(",", ".") if m else ""
     if not embed or urlparse(embed).hostname != PLAYER_HOST:
         raise ValueError("trusted player iframe not found")
-    player_html = fetch_player_html(url, embed)
+    player_html = player_html or fetch_player_html(url, embed)
     files = parse_player_json(player_html, "fileList")
     result["media_type"] = "series" if files.get("type") == "serial" else "movie"
     result["playback"] = {
@@ -517,7 +533,8 @@ def api_detail():
     if not allowed_page_url(url):
         return jsonify({"error": "invalid KinoKrad URL"}), 400
     try:
-        return jsonify(parse_detail(fetch_html(url), url))
+        page_html, player_html = fetch_detail_browser(url)
+        return jsonify(parse_detail(page_html, url, player_html))
     except Exception as exc:
         log.exception("detail failed")
         return jsonify({"error": str(exc)}), 502

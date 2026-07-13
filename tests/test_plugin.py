@@ -8,7 +8,10 @@ def test_remote_and_pointer_activation_are_both_supported():
     assert "hover:enter click" in PLUGIN
     assert "Lampa.Controller.collectionSet" in PLUGIN
     assert "Lampa.Controller.toggle('content')" in PLUGIN
-    assert "scroll.update($(event.target), true)" in PLUGIN
+    assert "scroll.immediate($(event.target), true)" in PLUGIN
+    assert "scrollToFocused()" in PLUGIN
+    assert "scroll.reset()" in PLUGIN
+    assert "kk-online-scroll{height:100%}" in PLUGIN
     assert "enter: function ()" in PLUGIN
     assert "target.trigger('hover:enter')" in PLUGIN
 
