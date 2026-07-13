@@ -30,17 +30,52 @@ def test_search_parser_reads_cards_and_ratings():
     assert item["media_type"] == "series"
 
 
+def test_ajax_search_parser_reads_fast_results():
+    payload = {"content": '''<a class="search-card" href="https://kinokrad.my/22460-avatar.html">
+      <span class="searchheading">Аватар</span><img src="/avatar.jpg">
+      <span class="search-card-categorys"><b>Сериал</b>, Фэнтези</span>
+      <span class="search-card-country">2024 · США</span>
+      <span class="search-card-kp-rting">KP: 7.15</span></a>'''}
+    item = server.parse_search_ajax(payload)[0]
+    assert item["title"] == "Аватар"
+    assert item["year"] == "2024"
+    assert item["poster"] == "https://kinokrad.my/avatar.jpg"
+    assert item["kinopoisk"] == "7.15"
+    assert item["media_type"] == "series"
+
+
+def test_ajax_search_uses_curl_without_shell():
+    original = server.subprocess.run
+    called = {}
+    try:
+        class Result:
+            stdout = '{"content":""}'
+
+        def fake_run(args, **kwargs):
+            called.update({"args": args, "kwargs": kwargs})
+            return Result()
+
+        server.subprocess.run = fake_run
+        assert server.search_ajax("тест") == []
+        assert called["args"][0] == "curl"
+        assert "story=тест" in called["args"]
+        assert "shell" not in called["kwargs"]
+        assert called["kwargs"]["check"] is True
+    finally:
+        server.subprocess.run = original
+
+
 def test_search_api_uses_encoded_kinokrad_url():
-    original = server.fetch_html
+    original = server.search_ajax
     try:
         called = []
-        server.fetch_html = lambda url: called.append(url) or '<a class="kino-poster" href="/1.html">Тест (2026)</a>'
+        server.search_ajax = lambda query: called.append(query) or [{"title": "Тест"}]
         response = server.app.test_client().get("/api/search?q=тест кино")
         assert response.status_code == 200
         assert response.json["count"] == 1
-        assert "%D1%82%D0%B5%D1%81%D1%82%20%D0%BA%D0%B8%D0%BD%D0%BE" in called[0]
+        assert called == ["тест кино"]
     finally:
-        server.fetch_html = original
+        server.search_ajax = original
 
 
 def test_movie_versions_are_flattened():

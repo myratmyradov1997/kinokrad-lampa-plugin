@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+import subprocess
 import threading
 import time
 from urllib.parse import quote, urljoin, urlparse
@@ -17,9 +18,11 @@ log = logging.getLogger("kinokrad")
 
 app = Flask(__name__)
 CORS(app)
-APP_VERSION = "2.0.1"
+APP_VERSION = "2.1.0"
 SITE = "https://kinokrad.my"
 PLAYER_HOST = "assortedia-as.stravers.live"
+SEARCH_AJAX = SITE + "/engine/lazydev/dle_search/ajax.php"
+SEARCH_STATE = {"hash": os.getenv("KINOKRAD_SEARCH_HASH", "62632ed7c8d10e11f297d1c2f1fd800d57a3f71e")}
 UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/145 Safari/537.36"
 SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": UA, "Accept-Language": "ru-RU,ru;q=0.9"})
@@ -193,6 +196,62 @@ def parse_search(html):
         })
     # Некоторые варианты шаблона не содержат внешний `.kino-card`.
     return result or parse_catalog(html)
+
+
+def parse_search_ajax(payload):
+    """Разбирает быструю autocomplete-выдачу KinoKrad."""
+    data = json.loads(payload) if isinstance(payload, str) else payload
+    if not isinstance(data, dict) or str(data.get("error", "")).lower() == "true":
+        raise ValueError((data or {}).get("text") or "KinoKrad AJAX search failed")
+    soup = BeautifulSoup(data.get("content") or "", "html.parser")
+    result = []
+    for anchor in soup.select("a.search-card[href]"):
+        url = full_url(anchor.get("href"))
+        if not allowed_page_url(url):
+            continue
+        title_node = anchor.select_one(".searchheading")
+        image = anchor.find("img")
+        country_node = anchor.select_one(".search-card-country")
+        country = clean(country_node.get_text(" ", strip=True) if country_node else "")
+        year_match = re.search(r"\b(19\d{2}|20\d{2})\b", country)
+        category_node = anchor.select_one(".search-card-categorys")
+        category = clean(category_node.get_text(" ", strip=True) if category_node else "")
+        imdb = anchor.select_one(".search-card-imdb-rting")
+        kp = anchor.select_one(".search-card-kp-rting")
+        result.append({
+            "id": stable_id(url),
+            "title": clean(title_node.get_text(" ", strip=True) if title_node else anchor.get("title", "")),
+            "year": year_match.group(1) if year_match else "",
+            "poster": full_url(image.get("src") if image else ""),
+            "url": url,
+            "description": category,
+            "imdb": clean(imdb.get_text(" ", strip=True) if imdb else "").replace("IMDb:", "").strip(),
+            "kinopoisk": clean(kp.get_text(" ", strip=True) if kp else "").replace("KP:", "").strip(),
+            "media_type": "series" if re.search(r"\b(?:Сериал|Мультсериал)\b", category, re.I) else "movie",
+        })
+    return result
+
+
+def search_ajax(query, timeout=12):
+    # KinoKrad фильтрует TLS fingerprint `requests`, но принимает тот же
+    # публичный AJAX-запрос от curl. Аргументы передаются без shell.
+    response = subprocess.run(
+        [
+            "curl", "-fsS", "--compressed", "--max-time", str(timeout),
+            "-X", "POST", SEARCH_AJAX,
+            "-A", UA,
+            "-H", "X-Requested-With: XMLHttpRequest",
+            "-H", "Referer: " + SITE + "/",
+            "--data-urlencode", "story=" + query,
+            "--data-urlencode", "thisUrl=/",
+            "--data-urlencode", "dle_hash=" + SEARCH_STATE["hash"],
+        ],
+        capture_output=True,
+        text=True,
+        timeout=timeout + 2,
+        check=True,
+    )
+    return parse_search_ajax(response.stdout)
 
 
 def parse_json_script(soup):
@@ -436,8 +495,16 @@ def api_search():
     if not query or len(query) > 120:
         return jsonify({"error": "query must contain 1-120 characters", "items": []}), 400
     try:
-        url = SITE + "/search/" + quote(query, safe="") + "/"
-        items = parse_search(fetch_html(url))
+        try:
+            items = search_ajax(query)
+        except Exception as ajax_exc:
+            log.warning("AJAX search failed, using browser fallback: %s", ajax_exc)
+            url = SITE + "/search/" + quote(query, safe="") + "/"
+            html = fetch_html(url)
+            fresh_hash = re.search(r"dle_login_hash\s*=\s*['\"]([a-f0-9]{40})", html, re.I)
+            if fresh_hash:
+                SEARCH_STATE["hash"] = fresh_hash.group(1)
+            items = parse_search(html)
         return jsonify({"query": query, "items": items, "count": len(items)})
     except Exception as exc:
         log.exception("search failed")

@@ -56,6 +56,7 @@
     var searchItems = [];
     var currentSeason = null;
     var currentEpisode = null;
+    var enterAction = null;
 
     function active() {
       try { return Lampa.Activity.active().activity === self.activity; } catch (e) { return true; }
@@ -79,16 +80,25 @@
     function picker(title, subtitle, items, callback, nextMode) {
       mode = nextMode;
       last = null;
+      enterAction = null;
       scroll.body().empty().append('<div class="kk-online-head"><div class="kk-brand">KinoKrad</div><h2>' + esc(title) +
         '</h2><p>' + esc(subtitle || '') + '</p></div>');
       items.forEach(function (item) {
         var node = $('<div class="kk-online-item selector"><div class="kk-online-title">' + esc(item.title) +
           '</div><div class="kk-online-subtitle">' + esc(item.subtitle || '') + '</div></div>');
+        var entering = false;
+        var choose = function () {
+          if (entering) return;
+          entering = true;
+          setTimeout(function () { entering = false; }, 700);
+          callback(item);
+        };
         node.on('hover:focus', function (event) {
           last = event.target;
+          enterAction = choose;
           scroll.update($(event.target), true);
         });
-        node.on('hover:enter click', function () { callback(item); });
+        node.on('hover:enter click', choose);
         scroll.append(node);
       });
       if (!items.length) scroll.body().append('<div class="kk-empty">Ничего не найдено</div>');
@@ -221,6 +231,12 @@
         right: function () { Navigator.move('right'); },
         up: function () { if (Navigator.canmove('up')) Navigator.move('up'); else Lampa.Controller.toggle('head'); },
         down: function () { Navigator.move('down'); },
+        enter: function () {
+          if (enterAction) return enterAction();
+          var target = scroll.render().find('.selector.focus').first();
+          if (!target.length) target = scroll.render().find('.selector').first();
+          if (target.length) target.trigger('hover:enter');
+        },
         back: goBack
       });
       focus();
@@ -235,7 +251,9 @@
     Lampa.Search.addSource({
       title: SOURCE,
       search: function (params, complete) {
-        request.silent(BASE_URL + '/api/search?q=' + encodeURIComponent(params.query || ''), function (json) {
+        var query = params.query || '';
+        try { query = decodeURIComponent(query); } catch (e) {}
+        request.silent(BASE_URL + '/api/search?q=' + encodeURIComponent(query), function (json) {
           var cards = ((json && json.items) || []).map(searchCard);
           complete(cards.length ? [{ title: SOURCE, results: cards }] : []);
         }, function () { complete([]); });

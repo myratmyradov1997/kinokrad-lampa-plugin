@@ -9,6 +9,8 @@ def test_remote_and_pointer_activation_are_both_supported():
     assert "Lampa.Controller.collectionSet" in PLUGIN
     assert "Lampa.Controller.toggle('content')" in PLUGIN
     assert "scroll.update($(event.target), true)" in PLUGIN
+    assert "enter: function ()" in PLUGIN
+    assert "target.trigger('hover:enter')" in PLUGIN
 
 
 def test_expected_components_and_player_exist():
@@ -23,3 +25,4 @@ def test_plugin_uses_native_lampa_cards_and_search():
     assert "view--torrent" in PLUGIN
     assert "/api/catalog" not in PLUGIN
     assert "kinokrad_catalog" not in PLUGIN
+    assert "decodeURIComponent(query)" in PLUGIN
