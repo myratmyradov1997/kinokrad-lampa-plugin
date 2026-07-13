@@ -18,7 +18,7 @@ log = logging.getLogger("kinokrad")
 
 app = Flask(__name__)
 CORS(app)
-APP_VERSION = "2.2.0"
+APP_VERSION = "2.3.0"
 SITE = "https://kinokrad.my"
 PLAYER_HOST = "assortedia-as.stravers.live"
 SEARCH_AJAX = SITE + "/engine/lazydev/dle_search/ajax.php"
@@ -281,6 +281,50 @@ def parse_json_script(soup):
     return {}
 
 
+def curl_html(url, referer="", timeout=20):
+    args = [
+        "curl", "-fsS", "--compressed", "--max-time", str(timeout),
+        "-A", UA,
+    ]
+    if referer:
+        args += ["-e", referer]
+    args.append(url)
+    response = subprocess.run(
+        args, capture_output=True, text=True, timeout=timeout + 2, check=True,
+    )
+    return response.stdout
+
+
+def extract_embed_url(html):
+    soup = BeautifulSoup(html, "html.parser")
+    ld = parse_json_script(soup)
+    iframe = soup.select_one('iframe[src*="stravers.live"]')
+    button = soup.select_one('[data-url*="stravers.live"]')
+    embed = (
+        (iframe.get("src") if iframe else "")
+        or (button.get("data-url") if button else "")
+        or (ld.get("video") or {}).get("embedUrl", "")
+        or ld.get("embedUrl", "")
+    )
+    if embed and embed.startswith("//"):
+        embed = "https:" + embed
+    return full_url(embed, SITE)
+
+
+def fetch_detail_fast(page_url, timeout=20):
+    """Получает карточку и fileList двумя быстрыми curl-запросами."""
+    if not allowed_page_url(page_url):
+        raise ValueError("invalid KinoKrad URL")
+    page_html = curl_html(page_url, timeout=timeout)
+    embed = extract_embed_url(page_html)
+    if urlparse(embed).hostname != PLAYER_HOST:
+        raise RuntimeError("trusted KinoKrad player iframe not found")
+    player_html = curl_html(embed, referer=page_url, timeout=timeout)
+    if not re.search(r"\bfileList\s*=\s*JSON\.parse", player_html):
+        raise RuntimeError("KinoKrad player metadata not found in fast response")
+    return page_html, player_html
+
+
 def text_after_label(soup, label):
     pattern = re.compile(r"^\s*" + re.escape(label), re.I)
     node = soup.find(string=pattern)
@@ -533,7 +577,11 @@ def api_detail():
     if not allowed_page_url(url):
         return jsonify({"error": "invalid KinoKrad URL"}), 400
     try:
-        page_html, player_html = fetch_detail_browser(url)
+        try:
+            page_html, player_html = fetch_detail_fast(url)
+        except Exception as fast_exc:
+            log.warning("fast detail failed, using browser fallback: %s", fast_exc)
+            page_html, player_html = fetch_detail_browser(url)
         return jsonify(parse_detail(page_html, url, player_html))
     except Exception as exc:
         log.exception("detail failed")

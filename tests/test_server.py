@@ -113,8 +113,26 @@ def test_player_fetch_waits_for_async_file_list():
 def test_detail_route_uses_single_browser_pass():
     source = open(server.__file__, encoding="utf-8").read()
     route = source[source.index("def api_detail():"):source.index("@app.get(\"/api/resolve\")")]
+    assert "fetch_detail_fast(url)" in route
     assert "fetch_detail_browser(url)" in route
     assert "fetch_html(url)" not in route
+
+
+def test_fast_detail_uses_trusted_player_and_no_shell():
+    original = server.curl_html
+    calls = []
+    page = '''<script type="application/ld+json">{
+      "name":"Тест", "video":{"embedUrl":"https://assortedia-as.stravers.live/?token=x"}
+    }</script>'''
+    player = "<script>const fileList = JSON.parse('{}');</script>"
+    try:
+        server.curl_html = lambda url, referer="", timeout=20: calls.append((url, referer)) or (page if not referer else player)
+        page_result, player_result = server.fetch_detail_fast("https://kinokrad.my/1-test.html")
+        assert page_result == page
+        assert player_result == player
+        assert calls[1][1] == "https://kinokrad.my/1-test.html"
+    finally:
+        server.curl_html = original
 
 
 def test_media_allowlist_rejects_arbitrary_hosts():
