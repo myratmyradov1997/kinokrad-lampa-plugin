@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.example.kinokrad-lampa</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/opt/lampa/kinokrad/.venv/bin/python</string>
+		<string>/opt/lampa/kinokrad/server.py</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>/opt/lampa/kinokrad</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PORT</key>
+		<string>5200</string>
+		<key>PLAYWRIGHT_BROWSERS_PATH</key>
+		<string>/opt/lampa/playwright</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/tmp/kinokrad-lampa.log</string>
+	<key>StandardErrorPath</key>
+	<string>/tmp/kinokrad-lampa.log</string>
+</dict>
+</plist>

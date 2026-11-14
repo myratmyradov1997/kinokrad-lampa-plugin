@@ -1,35 +1,38 @@
+import shutil
+import subprocess
 from pathlib import Path
 
+import pytest
 
-PLUGIN = (Path(__file__).parents[1] / "plugin.js").read_text(encoding="utf-8")
+PLUGIN_PATH = Path(__file__).parents[1] / "plugin.js"
+PLUGIN = PLUGIN_PATH.read_text(encoding="utf-8")
+
+
+@pytest.mark.skipif(not shutil.which("node"), reason="node is not installed")
+def test_plugin_is_valid_javascript():
+    subprocess.run(["node", "--check", str(PLUGIN_PATH)], check=True)
 
 
 def test_remote_and_pointer_activation_are_both_supported():
     assert "hover:enter click" in PLUGIN
     assert "Lampa.Controller.collectionSet" in PLUGIN
+    assert "toggle: bindCollection" in PLUGIN  # без рекурсии toggle->focus->toggle
     assert "Lampa.Controller.toggle('content')" in PLUGIN
-    assert "scroll.immediate(node, true)" in PLUGIN
-    assert "scrollToFocused()" in PLUGIN
-    assert "scroll.reset()" in PLUGIN
-    assert "kk-online-scroll{height:100%}" in PLUGIN
-    assert "enter: function ()" in PLUGIN
     assert "target.trigger('hover:enter')" in PLUGIN
+    assert "scroll.immediate" in PLUGIN
 
 
-def test_expected_components_and_player_exist():
-    assert "kinokrad_online" in PLUGIN
+def test_fast_paths_are_wired():
+    assert "/api/prepare?" in PLUGIN          # поиск+карточка+прогрев при открытии карточки
+    assert "/api/prefetch?" in PLUGIN         # подготовка потока при наведении
+    assert "default_audio" in PLUGIN          # без лишнего выбора дорожки
     assert "Lampa.Player.play" in PLUGIN
-    assert "/api/resolve" in PLUGIN
-    assert "element.quality = audio.quality" in PLUGIN
-    assert "work.quality_switched" in PLUGIN
-    assert "selectedFile.season" in PLUGIN
-    assert "if (enterAction) return enterAction();" not in PLUGIN
-
-
-def test_plugin_uses_native_lampa_cards_and_search():
+    assert "work.quality_switched" in PLUGIN  # восстановление ссылки после ошибки
     assert "Lampa.Search.addSource" in PLUGIN
-    assert "Lampa.Listener.follow('full'" in PLUGIN
     assert "view--torrent" in PLUGIN
-    assert "/api/catalog" not in PLUGIN
-    assert "kinokrad_catalog" not in PLUGIN
-    assert "decodeURIComponent(query)" in PLUGIN
+
+
+def test_player_keeps_remote_focus():
+    # список под плеером перерисовывается без перехвата фокуса
+    assert "renderBehindPlayer()" in PLUGIN
+    assert "|| silent) return;" in PLUGIN

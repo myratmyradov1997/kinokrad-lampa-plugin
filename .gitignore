@@ -1,4 +1,9 @@
 __pycache__/
 .pytest_cache/
 .venv/
+venv/
 *.log
+.env
+output/
+tmp/
+kinogo/assets/

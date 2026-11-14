@@ -1,0 +1,21 @@
+[Unit]
+Description=Kinogo source for Lampa (catalog + HLS proxy)
+Documentation=https://github.com/myratmyradov1997/kinokrad-lampa-plugin
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lampa
+Group=lampa
+WorkingDirectory=/opt/lampa/kinogo
+Environment=PORT=5210
+Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/lampa/playwright
+# Environment=KG_BROWSER_PROXY=http://127.0.0.1:7899
+ExecStart=/opt/lampa/kinogo/.venv/bin/python /opt/lampa/kinogo/server.py
+Restart=always
+RestartSec=4
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

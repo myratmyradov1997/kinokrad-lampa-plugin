@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.example.kinogo-lampa</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/opt/lampa/kinogo/.venv/bin/python</string>
+		<string>/opt/lampa/kinogo/server.py</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>/opt/lampa/kinogo</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PORT</key>
+		<string>5210</string>
+		<key>PLAYWRIGHT_BROWSERS_PATH</key>
+		<string>/opt/lampa/playwright</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/tmp/kinogo-lampa.log</string>
+	<key>StandardErrorPath</key>
+	<string>/tmp/kinogo-lampa.log</string>
+</dict>
+</plist>
